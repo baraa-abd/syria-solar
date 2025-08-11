@@ -12,7 +12,7 @@ import traceback
 from pathlib import Path
 
 # --- Instructions for User ---
-# 1. Make sure 'solarutils.py' is in the same directory as this script.
+# 1. Make sure 'solarutils.py' is in the same directory as this script in a folder named 'modules'.
 # 2. Create a 'models' directory in the same folder as this script.
 # 3. Inside 'models', create two subdirectories: 'bboxes' and 'corners'.
 # 4. Place your .pth model files into the respective folders.
@@ -23,8 +23,8 @@ from pathlib import Path
 # 7. The server will start on http://127.0.0.1:5001.
 # ---
 
-# Add the current directory to the path to find solarutils
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Add the modules directory to the path to find solarutils
+SCRIPT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'modules')
 sys.path.insert(0, SCRIPT_DIR)
 import solarutils
 
@@ -102,7 +102,7 @@ def get_models_from_cache(bbox_model_name, corner_model_name, sam_model_name):
     print("SAM model loaded.")
     
     # Load Corner Model from path
-    corner_model = solarutils.load_corner_model(path=str(corner_model_path), backbone=bbox_model.backbone, device=DEVICE, strategy = 'crop')
+    corner_model = solarutils.load_corner_model(path=str(corner_model_path), backbone=bbox_model.backbone, device=DEVICE, strategy = 'basic')
     print(f"Corner model loaded from {corner_model_path}")
     
     print("All models loaded successfully.")

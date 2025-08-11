@@ -193,7 +193,7 @@ def overlay_annotations(image, masks=None, bboxes=None, keypoints=None, save_suf
             ax.scatter(x2, y2, color='yellow', marker='*', s=100, label='Point 2') # Plot (x2, y2) as a yellow star
 
     title_parts = []
-    if mask is not None: title_parts.append("mask overlay")
+    if masks is not None: title_parts.append("mask overlay")
     if bboxes is not None: title_parts.append(f"{len(bboxes)} bounding boxes")
     if keypoints is not None: title_parts.append(f"{len(keypoints)} keypoint sets")
     
@@ -206,13 +206,14 @@ def overlay_annotations(image, masks=None, bboxes=None, keypoints=None, save_suf
       print(f"Image with annotations saved to 'img{save_suffix}.png'")
     if show: plt.show()
 
-def calculate_val_loss_bbox(model, val_loader, device):
+def calculate_val_loss_bbox(model, val_loader, gamma, device):
     val_loss = 0
     with torch.no_grad():
         for images, targets in val_loader:
             if not images: continue
             loss_dict = model([img.to(device) for img in images], [{k: v.to(device) for k, v in t.items()} for t in targets])
-            losses = sum(loss for loss in loss_dict.values())
+            weight = sum([len(t['labels']) for t in targets]) * gamma + 0.1   #give more weight to images with more positive examples
+            losses = sum(loss for loss in loss_dict.values()) * weight
             val_loss += losses.item()
             del images, targets, losses, loss_dict
     return val_loss
@@ -383,8 +384,9 @@ class SinglePanelDataset(Dataset):
             "image_id": torch.tensor(image_id, dtype=torch.int64)
         }
         if keypoints is not None:
+            keypoints = keypoints/torch.tensor([transformed_image.shape[-1], transformed_image.shape[-2]] * 2, dtype=torch.float32)
             if self.keypoint_transform:
-                keypoints = self.keypoint_transform(keypoints, (width, height))
+                keypoints = self.keypoint_transform(keypoints)
             target["keypoints"] = keypoints
 
         return transformed_image, target
@@ -446,7 +448,7 @@ def dataset_split(dataset, batch_sizes, split_ratio, collate_fn = collate_fn_bbo
 
 def get_bbox_detection_model(num_classes):
     """Loads a pre-trained Faster R-CNN model and adapts it for our number of classes."""
-    model = models.detection.fasterrcnn_resnet50_fpn_v2(weights=models.detection.FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT)
+    model = models.detection.fasterrcnn_resnet50_fpn_v2(weights=models.detection.FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT, trainable_backbone_layers = 5)
 
     # Get the number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
@@ -565,19 +567,18 @@ class CornerPredictor(nn.Module):
             )
 
     def forward(self, image, bbox, mask):
-        scale = torch.tensor([image.shape[-1], image.shape[-2]] * 2, dtype=torch.float32).to(image.device)
         image_features = self.feature_extractor(image)
         roi_features = self.roi_pooler(image_features, [bbox], [image.shape[-2:]])
         bbox_emb = self.bbox_processor(bbox)
         mask_emb = self.mask_processor(mask)
         if self.strategy == "basic":
             img_emb = self.img_processor(roi_features)           
-            return (self.combiner(torch.cat([img_emb, bbox_emb, mask_emb], dim=1))+1.0)*scale
+            return self.combiner(torch.cat([img_emb, bbox_emb, mask_emb], dim=1))
         elif self.strategy == "attention":
             img_seq = roi_features.flatten(2).permute(0, 2, 1)
             query = torch.cat([bbox_emb, mask_emb], dim=1).unsqueeze(1)
             attn_output, _ = self.attention(query=query, key=img_seq, value=img_seq)
-            return (self.combiner(attn_output.squeeze(1))+1.0)*scale
+            return self.combiner(attn_output.squeeze(1))
         elif self.strategy == "crop":
             cropped_img = torch.zeros_like(image)
             for i in range(image.shape[0]):
@@ -587,7 +588,7 @@ class CornerPredictor(nn.Module):
             cropped_roi_features = self.roi_pooler(cropped_features, [bbox], [cropped_img.shape[-2:]])
             cropped_emb = self.img_processor(cropped_roi_features)
             img_emb = self.img_processor(roi_features)
-            return (self.combiner(torch.cat([img_emb, cropped_emb, bbox_emb, mask_emb], dim=1))+1.0)*scale
+            return self.combiner(torch.cat([img_emb, cropped_emb, bbox_emb, mask_emb], dim=1))
 
 
 def load_corner_model(path, backbone, device, strategy = 'basic'):
@@ -671,7 +672,7 @@ def train_corner_model(corner_model, epochs, corner_loader, corner_optimizer, co
         if verbose: print(f"Corner Head - Epoch {epoch+1}, Train Loss: {train_losses_corner[-1]:.4f}, Val Loss: {val_losses_corner[-1]:.4f}")
     return train_losses_corner, val_losses_corner
 
-def train_bbox_corner_together(bbox_model, corner_model, epochs, bbox_loader, corner_loader, bbox_optimizer, corner_optimizer, corner_criterion, val_bbox_loader, val_corner_loader, device, verbose = False):
+def train_bbox_corner_together(bbox_model, corner_model, epochs, bbox_loader, corner_loader, bbox_optimizer, corner_optimizer, corner_criterion, val_bbox_loader, val_corner_loader, device, gamma = 1.0, verbose = False):
     val_losses_bbox = []
     val_losses_corner = []
     train_losses_bbox = []
@@ -685,12 +686,13 @@ def train_bbox_corner_together(bbox_model, corner_model, epochs, bbox_loader, co
         for images, targets in bbox_loader:
             if not images: continue
             loss_dict = bbox_model([img.to(device) for img in images], [{k: v.to(device) for k, v in t.items()} for t in targets])
-            losses = sum(loss for loss in loss_dict.values())
+            weight = sum([len(t['labels']) for t in targets]) * gamma + 0.1    #give more weight to images with more positive examples
+            losses = sum(loss for loss in loss_dict.values()) * weight
             train_loss_bbox += losses.item()
             bbox_optimizer.zero_grad(set_to_none = True); losses.backward(); bbox_optimizer.step()
             del images, targets, loss_dict, losses
 
-        val_loss_bbox = calculate_val_loss_bbox(bbox_model, val_bbox_loader, device)
+        val_loss_bbox = calculate_val_loss_bbox(bbox_model, val_bbox_loader, gamma, device)
         val_losses_bbox.append(val_loss_bbox/len(val_bbox_loader))
         train_losses_bbox.append(train_loss_bbox/len(bbox_loader))
 
@@ -905,6 +907,7 @@ def run_inference_pipeline_single(bbox_model, sam_model, sam_processor, corner_m
     with torch.no_grad():
         # --- Stage 1: Bounding Box Detection ---
         predicted_boxes = run_bbox_model_single(bbox_model, image_pil, bbox_transform, device, threshold = bbox_threshold)
+        print("found boxes = ", len(predicted_boxes))
         for score, bbox_xyxy_tensor, label in predicted_boxes:
             box_xyxy = box_xyxy_tensor.cpu().numpy().tolist()
             box_xywh = bbox_xyxy2xywh(box_xyxy)
@@ -918,7 +921,7 @@ def run_inference_pipeline_single(bbox_model, sam_model, sam_processor, corner_m
             mask_tensor_corner = corner_mask_transform(Image.fromarray(best_mask)).unsqueeze(0).to(device)
             bbox_tensor_corner = torch.tensor(box_xywh, dtype=torch.float32).unsqueeze(0).to(device)
 
-            pred_keypoints = corner_model(img_tensor_corner, bbox_tensor_corner, mask_tensor_corner)[0]
+            pred_keypoints = corner_model(img_tensor_corner, bbox_tensor_corner, mask_tensor_corner)[0]*torch.tensor([original_width, original_height] * 2, dtype=torch.float32)
             pred_keypoints = [pred_keypoints[i].item() for i in range(4)]
 
             # --- Assemble Annotation ---
@@ -933,6 +936,7 @@ def run_inference_pipeline_single(bbox_model, sam_model, sam_processor, corner_m
                 "area": area,
                 "keypoints": [round(p, 2) for p in pred_keypoints]
             }
+            print(annotation)
             annotations.append(annotation)
             next_annotation_id += 1
     return (image_info, annotations, next_annotation_id)
