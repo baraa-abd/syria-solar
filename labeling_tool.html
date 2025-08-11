@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Panel Hand-Labeling Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none; 
+        }
+        canvas {
+            touch-action: none; 
+            border: 1px solid #ccc;
+            max-width: 100%;
+            height: auto; 
+            display: block; 
+            outline: none; 
+            cursor: crosshair;
+        }
+        .button {
+            @apply px-4 py-2 rounded-md text-white font-semibold shadow-md transition-colors duration-150 ease-in-out;
+        }
+        .button-primary {
+            @apply bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400;
+        }
+        .button-secondary {
+            @apply bg-gray-500 hover:bg-gray-600 disabled:bg-gray-300;
+        }
+        .button-success {
+            @apply bg-green-600 hover:bg-green-700 disabled:bg-gray-400;
+        }
+        .button-danger {
+            @apply bg-red-500 hover:bg-red-600;
+        }
+        .instructions {
+            @apply text-sm text-gray-700 mb-2 p-3 bg-gray-100 rounded-md leading-relaxed;
+        }
+        .notification-bar {
+            @apply text-center text-sm text-red-800 bg-red-100 mb-2 p-2 rounded-md transition-opacity duration-300;
+        }
+        input[type="file"]::-webkit-file-upload-button {
+            @apply mr-4 py-2 px-4 rounded-md border-0 text-sm font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4 pt-8">
+
+    <div class="bg-white p-6 rounded-lg shadow-xl w-full max-w-5xl">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl font-bold text-gray-800">Solar Panel Hand-Labeling Tool</h1>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2">
+                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 border-b pb-4">
+                    <div>
+                        <label for="jsonUpload" class="block text-sm font-medium text-gray-700 mb-1">1. (Optional) Upload COCO JSON File:</label>
+                        <input type="file" id="jsonUpload" accept=".json, application/json" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+                    </div>
+                    <div>
+                        <label for="imageUpload" class="block text-sm font-medium text-gray-700 mb-1">3. Upload Image Folder:</label>
+                        <input type="file" id="imageUpload" accept="image/png, image/jpeg" webkitdirectory multiple class="block w-full text-sm text-gray-500 cursor-pointer">
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label for="csvUpload" class="block text-sm font-medium text-gray-700 mb-1">2. (Optional) Upload CSV to Filter Images:</label>
+                        <input type="file" id="csvUpload" accept=".csv, text/csv" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+                    </div>
+                    <div>
+                        <label for="rowCount" class="block text-sm font-medium text-gray-700 mb-1">Limit to first N images from CSV:</label>
+                        <input type="number" id="rowCount" placeholder="All" class="block w-full text-sm text-gray-900 border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+
+
+                <div id="appControls" class="space-y-4 mb-4">
+                    <!-- Step 1 Controls -->
+                    <div id="step1Controls">
+                        <p id="instructionsStep1" class="instructions">Upload an image folder to begin annotating.</p>
+                        <button id="confirmPolygonButton" class="button button-primary w-full" disabled>Next: Set Keypoints (Spacebar)</button>
+                    </div>
+
+                    <!-- Step 2 Controls -->
+                    <div id="step2Controls" style="display:none;">
+                        <p id="instructionsStep2" class="instructions">Select the keypoints for the panel.</p>
+                        <div class="flex space-x-2 mb-2">
+                            <button id="cancelToStep1Button" class="button button-secondary w-1/2">Adjust Polygon Shape</button>
+                             <button id="applyKeypointsButton" class="button button-primary w-1/2" disabled>Confirm Keypoints & Finalize Polygon (Spacebar)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="notification" class="notification-bar" style="display: none;"></div>
+                
+                <p id="imageProgress" class="text-center text-gray-600 font-medium mb-2"></p>
+
+                <div id="canvasContainer" class="mb-4 w-full flex justify-center bg-gray-200 p-2 rounded-md">
+                     <canvas id="imageCanvas" tabindex="0"></canvas>
+                </div>
+            </div>
+           
+            <div class="lg:col-span-1 space-y-4">
+                <div id="jsonInfo" class="p-3 border border-gray-300 rounded-md bg-gray-50">
+                    <h3 class="text-md font-semibold text-gray-700 mb-1">COCO Data Status</h3>
+                     <p id="jsonStatus" class="text-sm">No JSON loaded. A new one will be created.</p>
+                </div>
+                <div id="finalizedImagesContainer" class="p-3 border border-gray-300 rounded-md bg-gray-50">
+                    <h3 class="text-md font-semibold text-gray-700 mb-2">Finalized Images</h3>
+                    <ul id="finalizedImagesList" class="list-disc list-inside text-sm text-gray-600 h-48 overflow-y-auto">
+                        <!-- List items will be added here -->
+                    </ul>
+                </div>
+                <div class="space-y-3">
+                    <button id="finalizeImageButton" class="button button-success w-full border-2 border-green-800 shadow-lg" disabled>Finalize & Next Image (Enter)</button>
+                    <button id="skipImageButton" class="button button-secondary w-full" disabled>Skip Image (s)</button>
+                    <button id="downloadJsonButton" class="button button-primary w-full">Download COCO JSON</button>
+                    <button id="resetButton" class="button button-danger w-full">Reset Current Image (r)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const app = {
+            // --- STATE ---
+            image: null, imageDrawWidth: 0, imageDrawHeight: 0, imageOriginalWidth: 0, imageOriginalHeight: 0,
+            currentImageInfo: null, 
+            imageList: [], currentImageIndex: -1, 
+            isLoading: false,
+            corners: [], selectedCornerIndex: -1, isDraggingCorner: false,
+            bottomLeftKeypoint: null,
+            bottomRightKeypoint: null,
+            isDraggingBL: false,
+            isDraggingBR: false,
+            currentStep: 1, 
+            committedPolygons: [], 
+            cocoData: createNewCoco(),
+            isCocoDataFromScratch: true,
+            finalizedImages: [],
+            csvFileNames: [],
+            nextImageId: 1,
+
+            // --- DOM ELEMENTS ---
+            elements: {
+                jsonUpload: document.getElementById('jsonUpload'), jsonStatus: document.getElementById('jsonStatus'),
+                imageUpload: document.getElementById('imageUpload'),
+                csvUpload: document.getElementById('csvUpload'),
+                rowCount: document.getElementById('rowCount'),
+                canvas: document.getElementById('imageCanvas'), ctx: null, 
+                instructionsStep1: document.getElementById('instructionsStep1'),
+                confirmPolygonButton: document.getElementById('confirmPolygonButton'),
+                step1Controls: document.getElementById('step1Controls'),
+                instructionsStep2: document.getElementById('instructionsStep2'),
+                cancelToStep1Button: document.getElementById('cancelToStep1Button'),
+                applyKeypointsButton: document.getElementById('applyKeypointsButton'),
+                step2Controls: document.getElementById('step2Controls'),
+                resetButton: document.getElementById('resetButton'),
+                finalizeImageButton: document.getElementById('finalizeImageButton'),
+                skipImageButton: document.getElementById('skipImageButton'),
+                downloadJsonButton: document.getElementById('downloadJsonButton'),
+                canvasContainer: document.getElementById('canvasContainer'),
+                finalizedImagesContainer: document.getElementById('finalizedImagesContainer'),
+                finalizedImagesList: document.getElementById('finalizedImagesList'),
+                notification: document.getElementById('notification'),
+                imageProgress: document.getElementById('imageProgress'),
+            },
+
+            // --- CONFIGURATION ---
+            config: {
+                MAX_CANVAS_WIDTH: 800, MAX_CANVAS_HEIGHT: 600,
+                CORNER_RADIUS: 5, HIT_RADIUS: 12,   
+                KEYPOINT_RADIUS: 6,
+                KEYBOARD_MOVE_INCREMENT: 1, MIN_POLYGON_VERTICES: 3,
+                PREVIEW_FILL_COLOR: 'rgba(255, 0, 0, 0.3)',
+                BBOX_COLOR: 'rgba(0, 0, 255, 0.9)',
+                BL_KEYPOINT_COLOR: 'blue',
+                BR_KEYPOINT_COLOR: 'green',
+                ARROW_COLOR: 'rgba(255, 165, 0, 0.8)',
+                ARROW_LENGTH: 60,
+                ARROW_HEAD_SIZE: 8,
+            }
+        };
+
+        // --- CORE FUNCTIONS ---
+
+        function createNewCoco() {
+            return {
+                images: [],
+                annotations: [],
+                categories: [ { "id": 0, "name": "no_panels", "supercategory": "panel_status" }, { "id": 1, "name": "solar_panel", "supercategory": "panel_status" } ]
+            };
+        }
+
+        function getNextAnnotationId() {
+            if (app.cocoData.annotations.length === 0) return 1;
+            return Math.max(...app.cocoData.annotations.map(a => a.id)) + 1;
+        }
+
+        function init() {
+            app.elements.ctx = app.elements.canvas.getContext('2d');
+            addEventListeners();
+            resetAppVisuals(); 
+            draw(); 
+        }
+
+        function addEventListeners() {
+            app.elements.jsonUpload.addEventListener('change', handleJsonUpload);
+            app.elements.csvUpload.addEventListener('change', handleCsvUpload);
+            app.elements.imageUpload.addEventListener('change', handleImageUpload);
+            app.elements.resetButton.addEventListener('click', resetForNewImage);
+            app.elements.finalizeImageButton.addEventListener('click', handleFinalizeImage);
+            app.elements.skipImageButton.addEventListener('click', handleSkipImage); 
+            app.elements.downloadJsonButton.addEventListener('click', handleDownloadCoco);
+
+            app.elements.canvas.addEventListener('mousedown', handleCanvasMouseDown);
+            app.elements.canvas.addEventListener('mousemove', handleCanvasMouseMove);
+            app.elements.canvas.addEventListener('mouseup', handleCanvasMouseUp);
+            app.elements.canvas.addEventListener('mouseleave', handleCanvasMouseLeave); 
+            app.elements.canvas.addEventListener('touchstart', handleCanvasTouchStart);
+            app.elements.canvas.addEventListener('touchmove', handleCanvasTouchMove);
+            app.elements.canvas.addEventListener('touchend', handleCanvasTouchEnd);
+            window.addEventListener('keydown', handleKeyDown);
+
+            app.elements.confirmPolygonButton.addEventListener('click', () => {
+                if (app.corners.length >= app.config.MIN_POLYGON_VERTICES) {
+                    app.currentStep = 2;
+                    app.selectedCornerIndex = -1; 
+                    updateUIForStep(); draw();
+                }
+            });
+
+            app.elements.cancelToStep1Button.addEventListener('click', () => {
+                app.currentStep = 1;
+                app.bottomLeftKeypoint = null;
+                app.bottomRightKeypoint = null;
+                updateUIForStep(); draw();
+            });
+            
+            app.elements.applyKeypointsButton.addEventListener('click', handleConfirmKeypoints);
+        }
+        
+        // --- HANDLER FUNCTIONS ---
+
+        function handleJsonUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (Array.isArray(data.images) && Array.isArray(data.annotations) && Array.isArray(data.categories)) {
+                        app.cocoData = data;
+                        app.isCocoDataFromScratch = false;
+                        app.cocoData.file_name = file.name;
+
+                        if (app.cocoData.images.length > 0) {
+                            const maxId = Math.max(...app.cocoData.images.map(img => img.id));
+                            app.nextImageId = maxId + 1;
+                        } else {
+                            app.nextImageId = 1;
+                        }
+
+                        app.finalizedImages = [...new Set(app.cocoData.annotations.map(a => a.image_id))].map(id => {
+                            const img = app.cocoData.images.find(i => i.id === id);
+                            return img ? img.file_name : `Image ID ${id}`;
+                        });
+                        updateUIForStep();
+                    } else { throw new Error("Invalid COCO format."); }
+                } catch(err) {
+                    alert(`Error parsing JSON file: ${err.message}`);
+                    app.isCocoDataFromScratch = true;
+                    app.cocoData = createNewCoco();
+                    app.nextImageId = 1;
+                }
+                updateUIForStep();
+            };
+            reader.readAsText(file);
+        }
+
+        function handleCsvUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const text = e.target.result;
+                    const rows = text.split('\n').slice(1);
+                    app.csvFileNames = rows
+                        .map(row => row.split(',')[1]?.trim())
+                        .filter(Boolean);
+                    
+                    if (app.csvFileNames.length > 0) {
+                        showNotification(`Loaded ${app.csvFileNames.length} filenames from ${file.name}`, false);
+                    } else {
+                        showNotification(`Could not find any valid filenames in the second column of ${file.name}`, true);
+                    }
+                } catch (err) {
+                    showNotification(`Error parsing CSV file: ${err.message}`, true);
+                    app.csvFileNames = [];
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function handleImageUpload(event) {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            let allFiles = Array.from(files)
+                .filter(file => file.type.startsWith('image/'))
+                .sort((a, b) => a.name.localeCompare(b.name)); 
+
+            let filesToProcess = allFiles;
+
+            // Filter images based on CSV if provided
+            if (app.csvFileNames.length > 0) {
+                const rowCount = parseInt(app.elements.rowCount.value, 10);
+                let filterNames = app.csvFileNames;
+                if (!isNaN(rowCount) && rowCount > 0) {
+                    filterNames = filterNames.slice(0, rowCount);
+                }
+                
+                // If a COCO file is also loaded, exclude filenames that already exist in it
+                if (!app.isCocoDataFromScratch) {
+                    const existingCocoFilenames = new Set(app.cocoData.images.map(img => img.file_name));
+                    filterNames = filterNames.filter(name => !existingCocoFilenames.has(name));
+                }
+
+                const filterSet = new Set(filterNames);
+                filesToProcess = allFiles.filter(file => filterSet.has(file.name));
+                showNotification(`Filtered to ${filesToProcess.length} new images based on the CSV and existing COCO data.`, false);
+            }
+            
+            app.imageList = filesToProcess;
+
+            if (app.imageList.length === 0) {
+                showNotification("No new images found to label (check folder and filters).", true, 5000);
+                return;
+            }
+
+            app.currentImageIndex = -1;
+            loadNextImage();
+        }
+
+        function loadNextImage() {
+            if (app.isLoading) return; 
+            
+            resetForNewImage();
+            draw(); 
+            app.isLoading = true;
+
+            app.currentImageIndex++;
+
+            if (app.currentImageIndex >= app.imageList.length) {
+                showNotification("All images have been processed!", false, 10000);
+                app.image = null; 
+                app.elements.imageProgress.textContent = `Completed ${app.imageList.length} of ${app.imageList.length} images.`;
+                app.isLoading = false;
+                draw();
+                updateUIForStep();
+                return;
+            }
+
+            const file = app.imageList[app.currentImageIndex];
+            if (!file) return;
+            
+            const imageId = app.nextImageId;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                app.image = new Image();
+                app.image.onload = () => {
+                    app.currentImageInfo = { id: imageId, file_name: file.name, width: app.image.naturalWidth, height: app.image.naturalHeight };
+                    app.imageOriginalWidth = app.image.naturalWidth;
+                    app.imageOriginalHeight = app.image.naturalHeight;
+                    
+                    const aspectRatio = app.image.naturalWidth / app.image.naturalHeight;
+                    let width = app.config.MAX_CANVAS_WIDTH; let height = width / aspectRatio;
+                    if (height > app.config.MAX_CANVAS_HEIGHT) { height = app.config.MAX_CANVAS_HEIGHT; width = height * aspectRatio; }
+                    
+                    app.imageDrawWidth = Math.round(width);
+                    app.imageDrawHeight = Math.round(height);
+                    app.elements.canvas.width = app.imageDrawWidth;
+                    app.elements.canvas.height = app.imageDrawHeight;
+                    
+                    app.isLoading = false;
+                    updateUIForStep(); 
+                    draw();
+                };
+                app.image.onerror = () => { 
+                    console.error("Error loading image:", file.name); 
+                    showNotification(`Error loading image: ${file.name}. Skipping.`, true, 4000);
+                    app.isLoading = false;
+                    setTimeout(loadNextImage, 1000);
+                }
+                app.image.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function handleConfirmKeypoints() {
+            if (app.isLoading || !app.bottomLeftKeypoint || !app.bottomRightKeypoint) return;
+            
+            app.committedPolygons.push({ 
+                vertices: [...app.corners], 
+                bl_kp: { ...app.bottomLeftKeypoint },
+                br_kp: { ...app.bottomRightKeypoint },
+            });
+
+            app.corners = []; 
+            app.selectedCornerIndex = -1; 
+            app.bottomLeftKeypoint = null;
+            app.bottomRightKeypoint = null;
+            app.currentStep = 1; 
+            updateUIForStep(); 
+            draw();
+        }
+
+        function handleFinalizeImage() {
+            if (app.isLoading || !app.currentImageInfo) return;
+
+            if (app.corners.length > 0) {
+                showNotification("Please finish or reset the current polygon before finalizing.", true);
+                return;
+            }
+            
+            app.cocoData.images.push(app.currentImageInfo);
+            app.nextImageId++;
+
+            app.committedPolygons.forEach(p => {
+                const newAnnotation = {
+                    id: getNextAnnotationId(), 
+                    image_id: app.currentImageInfo.id, 
+                    category_id: 1, 
+                    iscrowd: 0,
+                    segmentation: [p.vertices.flatMap(v => [v.x, v.y])],
+                    bbox: calculateBbox(p.vertices), 
+                    area: calculatePolygonArea(p.vertices), 
+                    keypoints: [p.bl_kp.x, p.bl_kp.y, p.br_kp.x, p.br_kp.y]
+                };
+                app.cocoData.annotations.push(newAnnotation);
+            });
+
+            const hasPanels = app.committedPolygons.length > 0;
+            const { rle, area } = calculateRLE(app.committedPolygons, app.currentImageInfo.width, app.currentImageInfo.height);
+            const summaryAnnotation = {
+                id: getNextAnnotationId(), image_id: app.currentImageInfo.id, category_id: hasPanels ? 1 : 0,
+                iscrowd: 1, bbox: [],
+                segmentation: rle, area: area,
+            };
+            app.cocoData.annotations.push(summaryAnnotation);
+
+            showNotification(`Finalized image #${app.currentImageInfo.id} (${app.currentImageInfo.file_name}). Added ${app.committedPolygons.length} panels.`, false, 3000);
+            
+            app.finalizedImages.push(app.currentImageInfo.file_name);
+            loadNextImage();
+        }
+
+        function handleSkipImage() {
+            if (app.isLoading || !app.image) return;
+            showNotification(`Skipped image: ${app.currentImageInfo.file_name}`, true, 2000);
+            loadNextImage();
+        }
+        
+        function handleDownloadCoco() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(app.cocoData, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            const date = new Date().toISOString().slice(0, 10);
+            downloadAnchorNode.setAttribute("download", `coco_annotations_${date}.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        }
+
+        // --- DRAWING & UI ---
+
+        function draw() {
+            const ctx = app.elements.ctx; const canvas = app.elements.canvas;
+            if (!ctx) return;
+            
+            if (!app.image) {
+                canvas.width = app.elements.canvasContainer.clientWidth > 10 ? app.elements.canvasContainer.clientWidth : 400;
+                canvas.height = app.elements.canvasContainer.clientHeight > 10 ? app.elements.canvasContainer.clientHeight : 300;
+                ctx.fillStyle = '#f0f0f0'; ctx.fillRect(0,0, canvas.width, canvas.height);
+                ctx.fillStyle = '#a0a0a0'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.font = '16px Inter, Arial, sans-serif';
+                const message = app.imageList.length > 0 && app.currentImageIndex >= app.imageList.length 
+                    ? "All images processed!" 
+                    : "Upload JSON (optional), then an Image Folder";
+                ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+                return; 
+            }
+            
+            canvas.width = app.imageDrawWidth;
+            canvas.height = app.imageDrawHeight;
+
+            ctx.drawImage(app.image, 0, 0, canvas.width, canvas.height);
+
+            const drawOnCanvas = (drawCallback) => { ctx.save(); drawCallback(ctx); ctx.restore(); };
+
+            drawOnCanvas(() => {
+                ctx.fillStyle = app.config.PREVIEW_FILL_COLOR;
+                app.committedPolygons.forEach(p => {
+                    if (p.vertices.length < 3) return;
+                    ctx.beginPath();
+                    const startPoint = modelToView(p.vertices[0].x, p.vertices[0].y);
+                    ctx.moveTo(startPoint.x, startPoint.y);
+                    for (let i = 1; i < p.vertices.length; i++) {
+                        const point = modelToView(p.vertices[i].x, p.vertices[i].y);
+                         ctx.lineTo(point.x, point.y);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                });
+            });
+
+            if (app.corners.length > 0) {
+                 if (app.corners.length >= app.config.MIN_POLYGON_VERTICES) {
+                    drawOnCanvas(() => {
+                        ctx.fillStyle = app.config.PREVIEW_FILL_COLOR;
+                        ctx.beginPath();
+                        const startPoint = modelToView(app.corners[0].x, app.corners[0].y);
+                        ctx.moveTo(startPoint.x, startPoint.y);
+                        for (let i = 1; i < app.corners.length; i++) { 
+                             const point = modelToView(app.corners[i].x, app.corners[i].y);
+                             ctx.lineTo(point.x, point.y);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+
+                        if (app.currentStep === 1) {
+                            const bbox = calculateBbox(app.corners);
+                            const viewBboxStart = modelToView(bbox[0], bbox[1]);
+                            const viewBboxEnd = modelToView(bbox[0] + bbox[2], bbox[1] + bbox[3]);
+                            ctx.strokeStyle = app.config.BBOX_COLOR;
+                            ctx.lineWidth = 1.5;
+                            ctx.setLineDash([3, 3]);
+                            ctx.strokeRect(viewBboxStart.x, viewBboxStart.y, viewBboxEnd.x - viewBboxStart.x, viewBboxEnd.y - viewBboxStart.y);
+                            ctx.setLineDash([]);
+                        }
+                    });
+                }
+                
+                if (app.currentStep === 2 && app.bottomLeftKeypoint && app.bottomRightKeypoint) {
+                    drawOrientationArrow(ctx);
+                }
+
+                drawOnCanvas(() => {
+                    ctx.strokeStyle = '#FF0000'; ctx.lineWidth = 1.5; 
+                    ctx.beginPath();
+                    const startPoint = modelToView(app.corners[0].x, app.corners[0].y);
+                    ctx.moveTo(startPoint.x, startPoint.y);
+                    for (let i = 1; i < app.corners.length; i++) { 
+                        const point = modelToView(app.corners[i].x, app.corners[i].y);
+                        ctx.lineTo(point.x, point.y);
+                    }
+                    if (app.corners.length >= app.config.MIN_POLYGON_VERTICES) { ctx.closePath(); }
+                    ctx.stroke();
+
+                    app.corners.forEach((corner, index) => {
+                        const isSelected = (app.selectedCornerIndex === index && app.currentStep === 1); 
+                        const viewCorner = modelToView(corner.x, corner.y);
+                        
+                        ctx.strokeStyle = isSelected ? '#00FF00' : '#FF0000';
+                        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+                        
+                        if (app.currentStep === 2) {
+                            ctx.strokeStyle = 'rgba(50,50,50,0.6)';
+                            ctx.lineWidth = 1;
+                        }
+
+                        ctx.beginPath(); 
+                        ctx.arc(viewCorner.x, viewCorner.y, app.config.CORNER_RADIUS, 0, 2 * Math.PI); 
+                        ctx.stroke(); 
+                    });
+                });
+            }
+
+            if (app.currentStep === 2) {
+                if (app.bottomLeftKeypoint) {
+                    const viewKP = modelToView(app.bottomLeftKeypoint.x, app.bottomLeftKeypoint.y);
+                    ctx.fillStyle = app.config.BL_KEYPOINT_COLOR;
+                    ctx.beginPath();
+                    ctx.arc(viewKP.x, viewKP.y, app.config.KEYPOINT_RADIUS, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+                if (app.bottomRightKeypoint) {
+                    const viewKP = modelToView(app.bottomRightKeypoint.x, app.bottomRightKeypoint.y);
+                    ctx.fillStyle = app.config.BR_KEYPOINT_COLOR;
+                    ctx.beginPath();
+                    ctx.arc(viewKP.x, viewKP.y, app.config.KEYPOINT_RADIUS, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawOrientationArrow(ctx) {
+            const bl_kp = app.bottomLeftKeypoint;
+            const br_kp = app.bottomRightKeypoint;
+
+            const centerX = app.corners.reduce((sum, v) => sum + v.x, 0) / app.corners.length;
+            const centerY = app.corners.reduce((sum, v) => sum + v.y, 0) / app.corners.length;
+            const center = modelToView(centerX, centerY);
+
+            const angle = Math.atan2(br_kp.y - bl_kp.y, br_kp.x - bl_kp.x) - Math.PI;
+
+            ctx.save();
+            ctx.translate(center.x, center.y);
+            ctx.rotate(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, -app.config.ARROW_LENGTH);
+            
+            ctx.moveTo(0, -app.config.ARROW_LENGTH);
+            ctx.lineTo(-app.config.ARROW_HEAD_SIZE, -app.config.ARROW_LENGTH + app.config.ARROW_HEAD_SIZE);
+            ctx.moveTo(0, -app.config.ARROW_LENGTH);
+            ctx.lineTo(app.config.ARROW_HEAD_SIZE, -app.config.ARROW_LENGTH + app.config.ARROW_HEAD_SIZE);
+
+            ctx.strokeStyle = app.config.ARROW_COLOR;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        function updateUIForStep() {
+            const el = app.elements;
+            if (app.isCocoDataFromScratch) {
+                 el.jsonStatus.textContent = 'Using a new COCO data object.';
+                 el.jsonStatus.classList.remove('text-green-600', 'font-semibold');
+            } else {
+                 el.jsonStatus.textContent = `Loaded from ${app.cocoData.file_name || 'uploaded JSON'}.`;
+                 el.jsonStatus.classList.add('text-green-600', 'font-semibold');
+            }
+
+            el.finalizedImagesList.innerHTML = '';
+            app.finalizedImages.forEach(name => {
+                const li = document.createElement('li');
+                li.textContent = name;
+                el.finalizedImagesList.appendChild(li);
+            });
+            el.finalizedImagesList.scrollTop = el.finalizedImagesList.scrollHeight;
+
+            if (app.isLoading) {
+                el.imageProgress.textContent = `Loading...`;
+            } else if (!app.image) {
+                resetAppVisuals(); 
+                return; 
+            } else {
+                el.imageProgress.textContent = `Processing: ${app.currentImageInfo.file_name} (${app.currentImageIndex + 1} of ${app.imageList.length})`;
+            }
+            
+            el.instructionsStep1.classList.remove('text-green-700', 'text-red-700');
+            el.instructionsStep2.classList.remove('text-green-700', 'text-red-700');
+            
+            el.finalizeImageButton.disabled = !app.image || app.isLoading || app.corners.length > 0;
+            el.skipImageButton.disabled = !app.image || app.isLoading;
+
+            if (app.currentStep === 1) {
+                el.step1Controls.style.display = 'block'; el.step2Controls.style.display = 'none';
+                if (app.corners.length < app.config.MIN_POLYGON_VERTICES) {
+                    el.instructionsStep1.textContent = `Click to add vertices for a new panel. Min ${app.config.MIN_POLYGON_VERTICES} needed.`;
+                    el.confirmPolygonButton.disabled = true;
+                } else {
+                    el.instructionsStep1.textContent = `Polygon has ${app.corners.length} vertices. Adjust, or click "Next" (Spacebar) to set its keypoints.`;
+                    el.instructionsStep1.classList.add('text-green-700');
+                    el.confirmPolygonButton.disabled = false;
+                }
+                 if (app.corners.length > 0) { el.instructionsStep1.textContent += ' Click a vertex to select (mouse/keys to adjust, DEL to delete).' }
+            } else if (app.currentStep === 2) {
+                el.step1Controls.style.display = 'none'; el.step2Controls.style.display = 'block';
+                el.instructionsStep2.innerHTML = `Click anywhere to place the <b>bottom-left corner (blue)</b>, then the <b>bottom-right corner (green)</b>. <br>You can click and drag the keypoints to adjust their position.`;
+                el.applyKeypointsButton.disabled = !app.bottomLeftKeypoint || !app.bottomRightKeypoint;
+            }
+        }
+        
+        function resetAppVisuals() {
+            const el = app.elements;
+            el.instructionsStep1.textContent = 'Upload a COCO JSON (optional), then an Image Folder to begin.';
+            el.confirmPolygonButton.disabled = true;
+            el.step1Controls.style.display = 'block'; el.step2Controls.style.display = 'none';
+            el.finalizeImageButton.disabled = true;
+            el.skipImageButton.disabled = true;
+             if (!app.image) {
+                draw();
+             }
+        }
+        
+        function resetForNewImage() {
+            app.committedPolygons = [];
+            app.corners = []; 
+            app.selectedCornerIndex = -1; 
+            app.isDraggingCorner = false;
+            app.bottomLeftKeypoint = null;
+            app.bottomRightKeypoint = null;
+            app.isDraggingBL = false;
+            app.isDraggingBR = false;
+            app.currentStep = 1; 
+            updateUIForStep();
+            draw();
+        }
+
+        function showNotification(message, isError = false, duration = 3000) {
+            const el = app.elements.notification;
+            el.textContent = message;
+            el.classList.toggle('bg-red-100', isError);
+            el.classList.toggle('text-red-800', isError);
+            el.classList.toggle('bg-green-100', !isError);
+            el.classList.toggle('text-green-800', !isError);
+            el.style.opacity = '1';
+            el.style.display = 'block';
+            setTimeout(() => {
+                el.style.opacity = '0';
+                setTimeout(() => el.style.display = 'none', 300);
+            }, duration);
+        }
+
+        // --- EVENT COORDINATE & INPUT HANDLING ---
+        function handleKeyDown(event) {
+            if (app.isLoading) return;
+            if (event.target.matches('input, textarea, select')) return;
+
+            switch(event.key.toLowerCase()) {
+                case 'enter':
+                    event.preventDefault();
+                    if (!app.elements.finalizeImageButton.disabled) {
+                        app.elements.finalizeImageButton.click();
+                    } else if (app.image && app.corners.length > 0) {
+                        showNotification("Cannot finalize: please complete the current polygon first.", true);
+                    }
+                    break;
+                case 's':
+                    event.preventDefault();
+                    if (!app.elements.skipImageButton.disabled) {
+                        app.elements.skipImageButton.click();
+                    }
+                    break;
+                case 'r':
+                    event.preventDefault();
+                    if (!app.elements.resetButton.disabled) {
+                        app.elements.resetButton.click();
+                    }
+                    break;
+                case ' ': // Spacebar
+                    event.preventDefault();
+                    if (app.currentStep === 1 && !app.elements.confirmPolygonButton.disabled) {
+                        app.elements.confirmPolygonButton.click();
+                    } else if (app.currentStep === 2 && !app.elements.applyKeypointsButton.disabled) {
+                        app.elements.applyKeypointsButton.click();
+                    }
+                    break;
+            }
+
+            if (!app.image) return;
+
+            if (app.currentStep !== 1) return;
+            if (app.selectedCornerIndex !== -1) { 
+                const corner = app.corners[app.selectedCornerIndex]; let moved = false; const moveIncrement = app.config.KEYBOARD_MOVE_INCREMENT;
+                switch (event.key) {
+                    case 'ArrowUp': corner.y -= moveIncrement; moved = true; break;
+                    case 'ArrowDown': corner.y += moveIncrement; moved = true; break;
+                    case 'ArrowLeft': corner.x -= moveIncrement; moved = true; break;
+                    case 'ArrowRight': corner.x += moveIncrement; moved = true; break;
+                    case 'Delete': case 'Backspace': 
+                        app.corners.splice(app.selectedCornerIndex, 1); app.selectedCornerIndex = -1; 
+                        updateUIForStep(); draw(); event.preventDefault(); return; 
+                }
+                if (moved) {
+                    event.preventDefault(); 
+                    corner.x = Math.max(0, Math.min(corner.x, app.imageOriginalWidth));
+                    corner.y = Math.max(0, Math.min(corner.y, app.imageOriginalHeight));
+                    draw(); 
+                }
+            }
+        }
+        function handleCanvasMouseDown(event) {
+            if (app.isLoading || !app.image) return;
+            const pos = viewToModel(...Object.values(getEventCoordinates(event)));
+
+            if (app.currentStep === 1) {
+                const viewHitRadius = app.config.HIT_RADIUS * (app.imageOriginalWidth / app.elements.canvas.width);
+                for (let i = 0; i < app.corners.length; i++) {
+                    const corner = app.corners[i]; const dist = Math.sqrt(Math.pow(pos.x - corner.x, 2) + Math.pow(pos.y - corner.y, 2));
+                    if (dist < viewHitRadius) { 
+                        app.selectedCornerIndex = i; app.isDraggingCorner = true; draw(); return; 
+                    }
+                }
+                app.corners.push(pos); app.selectedCornerIndex = app.corners.length - 1; 
+                updateUIForStep(); draw();
+            } else if (app.currentStep === 2) { 
+                const viewHitRadius = app.config.HIT_RADIUS * (app.imageOriginalWidth / app.elements.canvas.width);
+
+                if (app.bottomLeftKeypoint) {
+                    const dist = Math.sqrt(Math.pow(pos.x - app.bottomLeftKeypoint.x, 2) + Math.pow(pos.y - app.bottomLeftKeypoint.y, 2));
+                    if (dist < viewHitRadius) {
+                        app.isDraggingBL = true;
+                        return;
+                    }
+                }
+                if (app.bottomRightKeypoint) {
+                    const dist = Math.sqrt(Math.pow(pos.x - app.bottomRightKeypoint.x, 2) + Math.pow(pos.y - app.bottomRightKeypoint.y, 2));
+                    if (dist < viewHitRadius) {
+                        app.isDraggingBR = true;
+                        return;
+                    }
+                }
+
+                if (!app.bottomLeftKeypoint) {
+                    app.bottomLeftKeypoint = pos;
+                    app.isDraggingBL = true;
+                } else if (!app.bottomRightKeypoint) {
+                    app.bottomRightKeypoint = pos;
+                    app.isDraggingBR = true;
+                }
+                updateUIForStep();
+                draw();
+            }
+        }
+        function handleCanvasMouseMove(event) {
+            if (app.isLoading || !app.image) return;
+            const pos = viewToModel(...Object.values(getEventCoordinates(event)));
+            
+            if (app.currentStep === 1 && app.isDraggingCorner && app.selectedCornerIndex !== -1) {
+                app.corners[app.selectedCornerIndex] = pos;
+                draw();
+            } else if (app.currentStep === 2) {
+                if (app.isDraggingBL) {
+                    app.bottomLeftKeypoint = pos;
+                    draw();
+                } else if (app.isDraggingBR) {
+                    app.bottomRightKeypoint = pos;
+                    draw();
+                }
+            }
+        }
+        function handleCanvasMouseUp(event) {
+            if (app.isLoading || !app.image) return;
+            app.isDraggingCorner = false;
+            app.isDraggingBL = false;
+            app.isDraggingBR = false;
+        }
+        function handleCanvasMouseLeave() {
+            if (app.isLoading || !app.image) return;
+            app.isDraggingCorner = false;
+            app.isDraggingBL = false;
+            app.isDraggingBR = false;
+        }
+        function handleCanvasTouchStart(event) { if (app.isLoading || !app.image) return; event.preventDefault(); handleCanvasMouseDown(event); }
+        function handleCanvasTouchMove(event) { if (app.isLoading || !app.image) return; event.preventDefault(); handleCanvasMouseMove(event); }
+        function handleCanvasTouchEnd(event) { if (app.isLoading || !app.image) return; handleCanvasMouseUp(event); }
+        
+        // --- HELPER & UNCHANGED FUNCTIONS ---
+        getEventCoordinates = function(event) {
+            const canvas = app.elements.canvas; const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            if (event.touches && event.touches.length > 0) { clientX = event.touches[0].clientX; clientY = event.touches[0].clientY; } 
+            else if (event.changedTouches && event.changedTouches.length > 0) { clientX = event.changedTouches[0].clientX; clientY = event.changedTouches[0].clientY; }
+            else { clientX = event.clientX; clientY = event.clientY; }
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        };
+        viewToModel = function(viewX, viewY) {
+            const canvas = app.elements.canvas;
+            if (!app.image || canvas.width === 0 || canvas.height === 0) return {x: viewX, y: viewY};
+            return {
+                x: viewX * (app.imageOriginalWidth / canvas.width),
+                y: viewY * (app.imageOriginalHeight / canvas.height),
+            };
+        };
+        modelToView = function(modelX, modelY) {
+             const canvas = app.elements.canvas;
+             if (!app.image || app.imageOriginalWidth === 0 || app.imageOriginalHeight === 0) return {x: modelX, y: modelY};
+             return {
+                x: modelX * (canvas.width / app.imageOriginalWidth),
+                y: modelY * (canvas.height / app.imageOriginalHeight),
+            };
+        };
+        calculateBbox = function(vertices) {
+            if (vertices.length === 0) return [0, 0, 0, 0];
+            let minX = vertices[0].x, minY = vertices[0].y, maxX = vertices[0].x, maxY = vertices[0].y;
+            for(let i = 1; i < vertices.length; i++) {
+                minX = Math.min(minX, vertices[i].x);
+                minY = Math.min(minY, vertices[i].y);
+                maxX = Math.max(maxX, vertices[i].x);
+                maxY = Math.max(maxY, vertices[i].y);
+            }
+            return [minX, minY, maxX - minX, maxY - minY];
+        };
+        calculatePolygonArea = function(vertices) {
+            let area = 0;
+            for (let i = 0; i < vertices.length; i++) {
+                const j = (i + 1) % vertices.length;
+                area += vertices[i].x * vertices[j].y;
+                area -= vertices[j].x * vertices[i].y;
+            }
+            return Math.abs(area / 2);
+        };
+        calculateRLE = function(polygons, width, height) {
+            if (polygons.length === 0) return {rle: [], area: 0};
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width; tempCanvas.height = height;
+            const ctx = tempCanvas.getContext('2d');
+            ctx.fillStyle = '#FFFFFF';
+            polygons.forEach(p => {
+                const poly = p.vertices; if (poly.length < 3) return;
+                ctx.beginPath();
+                ctx.moveTo(poly[0].x, poly[0].y);
+                for (let i = 1; i < poly.length; i++) {
+                    ctx.lineTo(poly[i].x, poly[i].y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            });
+            const imageData = ctx.getImageData(0, 0, width, height).data;
+            const rle = [];
+            let currentRunVal = 0;
+            let runLength = 0;
+            let totalArea = 0;
+
+            for (let i = 0; i < imageData.length; i += 4) {
+                const pixelVal = imageData[i] > 0 ? 1 : 0; 
+                if (pixelVal === 1) totalArea++;
+                if (i === 0) { currentRunVal = pixelVal; }
+                if (pixelVal === currentRunVal) {
+                    runLength++;
+                } else {
+                    rle.push(runLength);
+                    currentRunVal = pixelVal;
+                    runLength = 1;
+                }
+            }
+            rle.push(runLength);
+
+            return { rle: rle, area: totalArea };
+        };
+
+        // --- STARTUP ---
+        init();
+    </script>
+
+</body>
+</html>
