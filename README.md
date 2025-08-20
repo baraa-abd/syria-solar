@@ -2,6 +2,8 @@
 
 [Erdős Institute](https://www.erdosinstitute.org/) [Deep Learning Boot Camp](https://www.erdosinstitute.org/programs/summer-2025/deep-learning-boot-camp), Summer 2025.
 
+![One of our aerial drone photographs](/main_ipynb_images/drone_7.jpg)
+
 ## Team Members:
 - [Al Baraa Abd Aldaim](https://www.linkedin.com/in/baraa-abd/)
 - [Nicholas Geiser](https://www.linkedin.com/in/ngeiser/)
